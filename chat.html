@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>AI Voice Companion</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    /* --- CSS STYLES --- */
+    * { box-sizing: border-box; }
+
+    body {
+      background-color: #1a1a1a;
+      color: white;
+      font-family: 'Segoe UI', sans-serif;
+      margin: 0;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+    }
+
+    /* Left Side: Text Output (2/3) */
+    .chat-section {
+        flex: 2;
+        background-color: #222;
+        display: flex;
+        flex-direction: column;
+        padding: 40px;
+        border-right: 1px solid #333;
+    }
+
+    #chat-box {
+        flex-grow: 1;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+        padding-right: 10px;
+    }
+
+    /* Scrollbar Styling */
+    #chat-box::-webkit-scrollbar { width: 8px; }
+    #chat-box::-webkit-scrollbar-track { background: #1a1a1a; }
+    #chat-box::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+
+    .message {
+        padding: 15px;
+        border-radius: 8px;
+        max-width: 80%;
+        line-height: 1.5;
+        animation: fadeIn 0.3s ease;
+    }
+
+    .message.system {
+        background-color: #333;
+        color: #ccc;
+        align-self: flex-start;
+        font-style: italic;
+        font-size: 0.9em;
+    }
+
+    /* Right Side: Character (1/3) */
+    .character-section {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        background-color: #1a1a1a;
+        position: relative;
+    }
+
+    #character {
+        width: 100%;
+        max-width: 350px;
+        height: auto;
+        cursor: pointer;
+        filter: drop-shadow(0 0 15px #ffffff33);
+        transition: filter 0.3s ease;
+    }
+
+    #character:hover {
+        filter: drop-shadow(0 0 25px #ffffff55);
+    }
+
+    .status-indicator {
+      margin-top: 20px;
+      font-size: 16px;
+      color: #aaa;
+      font-weight: 300;
+      text-align: center;
+    }
+
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(5px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Mobile Responsive */
+    @media (max-width: 768px) {
+        body { flex-direction: column-reverse; }
+        .chat-section { flex: 1; }
+        .character-section { flex: 0 0 300px; border-bottom: 1px solid #333; }
+        #character { width: 200px; }
+    }
+  </style>
+</head>
+<body>
+  
+  <!-- Left: Text Output -->
+  <div class="chat-section">
+      <div id="chat-box">
+          <div class="message system">System initialized. Click the character on the right to start speaking.</div>
+      </div>
+  </div>
+
+  <!-- Right: Character -->
+  <div class="character-section">
+      <img id="character" src="assets/hakoz/closedmouth.png" alt="AI Character" title="Click to speak">
+      <div id="mini-status" class="status-indicator">Idle</div>
+  </div>
+
+  <audio id="beep" src="https://www.soundjay.com/button/sounds/button-3.mp3" preload="auto"></audio>
+
+  <script>
+    // --- JAVASCRIPT LOGIC ---
+    const character = document.getElementById('character');
+    const miniStatus = document.getElementById('mini-status');
+    const chatBox = document.getElementById('chat-box');
+    const beep = document.getElementById('beep');
+
+    // Helper: Add text to the chat box
+    function addLog(text, type = 'system') {
+        const div = document.createElement('div');
+        div.className = `message ${type}`;
+        div.textContent = text;
+        chatBox.appendChild(div);
+        chatBox.scrollTop = chatBox.scrollHeight;
+        
+        if(type !== 'error') {
+            miniStatus.textContent = text;
+        }
+    }
+
+    // Animation Config
+    const characterStates = {
+        idle: 'assets/hakoz/closedmouth.png',
+        blink: 'assets/hakoz/closedeyes.png',
+        listening: 'assets/hakoz/thinking.png',
+        speaking: [
+            'assets/hakoz/openmouth.png',
+            'assets/hakoz/closedmouth.png'
+        ]
+    };
+    
+    // Preload Images
+    function preloadImages() {
+        const imagesToLoad = [
+            characterStates.idle, 
+            characterStates.blink, 
+            characterStates.listening, 
+            ...characterStates.speaking
+        ];
+        imagesToLoad.forEach(src => {
+            const img = new Image();
+            img.src = src;
+        });
+    }
+    preloadImages();
+
+    let idleAnimationInterval;
+    let speakingAnimationInterval;
+
+    // Animation Functions
+    function startIdleAnimation() {
+        stopAllAnimations();
+        character.src = characterStates.idle;
+        idleAnimationInterval = setInterval(() => {
+            character.src = characterStates.blink;
+            setTimeout(() => {
+                if (character.src.includes('closedeyes')) {
+                    character.src = characterStates.idle;
+                }
+            }, 200);
+        }, 4000);
+    }
+
+    function startSpeakingAnimation() {
+        stopAllAnimations();
+        let frame = 0;
+        speakingAnimationInterval = setInterval(() => {
+            character.src = characterStates.speaking[frame];
+            frame = (frame + 1) % characterStates.speaking.length;
+        }, 200);
+    }
+
+    function stopAllAnimations() {
+        clearInterval(idleAnimationInterval);
+        clearInterval(speakingAnimationInterval);
+    }
+    
+    // Core Logic
+    let mediaRecorder;
+    let audioChunks = [];
+    let isRecording = false;
+
+    function sendToN8n(base64Audio) {
+        addLog("Processing...", "system");
+        
+        // Use YOUR n8n URL here
+        const n8nWebhookUrl = 'https://n8n.srv1120095.hstgr.cloud/webhook/ai-voice-input';
+
+        fetch(n8nWebhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                audioData: base64Audio,
+                fileName: `recording-${new Date().toISOString()}.webm`
+            }),
+        })
+        .then(response => {
+            if (!response.ok) throw new Error(`Server error: ${response.status}`);
+            return response.json(); // THIS IS THE KEY CHANGE (reading JSON instead of Blob)
+        })
+        .then(data => {
+            // 1. Display Text Response
+            if (data.text) {
+                addLog(data.text, 'system');
+            }
+
+            // 2. Play Audio Response
+            if (data.audio) {
+                // We add the prefix because n8n is sending raw base64 data
+                const audioSource = `data:audio/mp3;base64,${data.audio}`;
+                const audio = new Audio(audioSource);
+
+                audio.onplay = () => {
+                  startSpeakingAnimation();
+                  miniStatus.textContent = "AI is speaking...";
+                };
+
+                audio.onended = () => {
+                  startIdleAnimation();
+                  miniStatus.textContent = "Idle";
+                };
+
+                audio.play();
+            }
+        })
+        .catch(err => {
+            console.error("Error:", err);
+            addLog("Error communicating with AI.", "error");
+            startIdleAnimation();
+        });
+    }
+
+    async function startRecording() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        isRecording = true;
+        audioChunks = [];
+        mediaRecorder = new MediaRecorder(stream);
+
+        mediaRecorder.addEventListener("dataavailable", event => {
+          audioChunks.push(event.data);
+        });
+
+        mediaRecorder.addEventListener("stop", () => {
+          const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+          const reader = new FileReader();
+          reader.readAsDataURL(audioBlob);
+          reader.onloadend = () => {
+            const base64String = reader.result;
+            sendToN8n(base64String);
+          };
+        });
+
+        beep.play();
+        mediaRecorder.start();
+        
+        stopAllAnimations();
+        character.src = characterStates.listening;
+        addLog("Listening...", "system");
+      } catch (error) {
+        console.error("Microphone Error:", error);
+        addLog("Error: Microphone permission denied.", "error");
+        isRecording = false;
+      }
+    }
+
+    function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+        isRecording = false;
+      }
+    }
+
+    character.addEventListener('click', () => {
+      if (isRecording) {
+        stopRecording();
+      } else {
+        startRecording();
+      }
+    });
+
+    // Start idle when page loads
+    window.onload = startIdleAnimation;
+  </script>
+</body>
+</html>
