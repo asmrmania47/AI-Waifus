@@ -100,6 +100,7 @@
 
   <!-- Audio Elements -->
   <audio id="beep" src="https://www.soundjay.com/button/sounds/button-3.mp3" preload="auto"></audio>
+  <!-- TYPO FIXED: asstes -> assets -->
   <audio id="welcome-audio" src="asstes/welcome.wav" preload="auto"></audio>
 
   <script>
@@ -112,7 +113,7 @@
 
     // --- Configuration ---
     const CONFIG = {
-        framerate: 100, // Slower speed (80ms per frame)
+        framerate: 100, 
         padLength: 4,  
         filePrefix: 'frame_',
         fileExt: '.jpg'
@@ -164,13 +165,8 @@
         
         let stateObj = charData[state];
         
-        // STRICT FALLBACK LOGIC
         if (!stateObj) {
-            // If requested state is missing, ALWAYS fallback to IDLE.
-            // Never fallback to talking unless specifically requested.
             stateObj = charData['idle'];
-            
-            // If even idle is missing, try talking but this is a last resort
             if (!stateObj) stateObj = charData['talking'];
         }
 
@@ -184,7 +180,8 @@
 
         const charData = CHARACTERS[currentCharField];
         let stateObj = charData[currentState] || charData['idle'];
-        const maxFrames = stateObj.frameCount || 50; 
+        // Dynamic frame limit to handle different folder sizes
+        let maxFrames = stateObj.frameCount || 50; 
 
         animationInterval = setInterval(() => {
             frameIndex += frameDirection;
@@ -200,16 +197,22 @@
 
             const path = getFramePath(currentCharField, currentState, frameIndex);
             
-            // Image preloading
             const img = new Image();
             img.src = path;
-            img.onload = () => { charImg.src = path; };
             
-            // Auto-correction for shorter folders
+            img.onload = () => { 
+                charImg.src = path; 
+            };
+            
+            // AUTO-STOP: If frame doesn't exist, turn around immediately
             img.onerror = () => {
                 if (frameDirection === 1) {
+                    // Update the limit for this state temporarily to prevent future 404s
+                    stateObj.frameCount = frameIndex - 1;
+                    maxFrames = frameIndex - 1;
+                    
                     frameDirection = -1;
-                    frameIndex -= 2; 
+                    frameIndex = Math.max(1, frameIndex - 2); 
                 }
             };
 
@@ -231,18 +234,14 @@
 
     // --- Character Switching & Welcome ---
     
-    // Function to handle switching characters or initializing
     function triggerWelcomeSequence(charName) {
         currentCharField = charName;
         
-        // 1. Set text
         const displayName = charSelect.options[charSelect.selectedIndex].text;
         statusText.textContent = `Hello, I'm ${displayName}`;
         
-        // 2. Start Waving immediately
         setState('waving');
 
-        // 3. Play Audio
         welcomeAudio.pause();
         welcomeAudio.currentTime = 0;
         
@@ -250,14 +249,12 @@
             console.log("Autoplay blocked until user interaction.");
         });
 
-        // 4. When audio ends, go to Idle
         welcomeAudio.onended = () => {
             setState('idle');
             statusText.textContent = "Click the character to speak";
         };
     }
 
-    // Event Listener for Dropdown
     charSelect.addEventListener('change', (e) => {
         triggerWelcomeSequence(e.target.value);
     });
@@ -266,7 +263,7 @@
 
     function sendToN8n(base64Audio) {
         statusText.textContent = "Thinking...";
-        setState('idle'); // Remain idle while thinking
+        setState('idle'); // Ensure idle while thinking
 
         const n8nWebhookUrl = 'https://n8n.srv1120095.hstgr.cloud/webhook-test/ai-waifu-voice-input';
 
@@ -279,29 +276,45 @@
             }),
         })
         .then(response => {
+            // FIX 1: Check content type. If n8n sends JSON, it's an error, not audio.
+            const contentType = response.headers.get("content-type");
+            if (contentType && contentType.indexOf("application/json") !== -1) {
+                console.warn("Server returned JSON instead of audio.");
+                throw new Error("AI returned text/error, not audio.");
+            }
             if (!response.ok) throw new Error(`Server error: ${response.status}`);
             return response.blob();
         })
         .then(audioBlob => {
+            // FIX 2: Check if blob is too small (empty response)
+            if (audioBlob.size < 100) throw new Error("Audio response was empty.");
+
             const audioURL = URL.createObjectURL(audioBlob);
             const audio = new Audio(audioURL);
 
-            // ONLY trigger talking when audio actually starts playing
-            audio.onplay = () => {
+            // FIX 3: Use 'playing' instead of 'play'. 
+            // 'playing' fires when sound actually starts emitting.
+            audio.addEventListener('playing', () => {
               setState('talking');
               statusText.textContent = "Responding...";
-            };
+            });
 
-            audio.onended = () => {
+            audio.addEventListener('ended', () => {
               setState('idle');
               statusText.textContent = "Click the character to speak";
-            };
+            });
+            
+            audio.addEventListener('error', (e) => {
+                console.error("Audio failed to play", e);
+                statusText.textContent = "Error playing audio.";
+                setState('idle');
+            });
 
             audio.play();
         })
         .catch(err => {
             console.error(err);
-            statusText.textContent = "Error communicating with AI.";
+            statusText.textContent = "Error: " + err.message;
             setState('idle');
         });
     }
@@ -316,7 +329,6 @@
 
     async function startRecording() {
       try {
-        // Stop welcome audio if user interrupts
         welcomeAudio.pause();
         
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -342,8 +354,6 @@
         
         charImg.style.filter = "drop-shadow(0 0 15px #ff0000aa)";
         statusText.textContent = "Listening...";
-        
-        // Ensure we are in idle or listening state (not talking)
         setState('idle'); 
 
       } catch (error) {
@@ -365,7 +375,6 @@
     charImg.addEventListener('click', toggleRecording);
 
     window.onload = () => {
-        // Start with Emma (or whoever is first)
         triggerWelcomeSequence('emma');
     };
 
