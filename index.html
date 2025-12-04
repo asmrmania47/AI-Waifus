@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     body {
-      background-color: #1a1a1a; /* Darker grey for better contrast */
+      background-color: #1a1a1a;
       color: white;
       font-family: 'Segoe UI', sans-serif;
       display: flex;
@@ -18,110 +18,253 @@
       overflow: hidden;
     }
 
+    #character-container {
+        position: relative;
+        width: 100%;
+        max-width: 600px; /* Adjust based on your preferred size */
+        height: 80vh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+
     #character {
-        width: 280px;
-        height: 280px;
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
         cursor: pointer;
-        /* Optional: Add a subtle glow to the character */
-        filter: drop-shadow(0 0 15px #ffffff33);
+        filter: drop-shadow(0 0 15px #ffffff22);
         transition: filter 0.3s ease;
     }
 
     #character:hover {
-        filter: drop-shadow(0 0 25px #ffffff55);
+        filter: drop-shadow(0 0 25px #ffffff44);
+    }
+
+    .controls {
+        position: absolute;
+        top: 20px;
+        right: 20px;
+        z-index: 100;
+        display: flex;
+        gap: 10px;
+    }
+
+    select {
+        background: #333;
+        color: white;
+        border: 1px solid #555;
+        padding: 8px 15px;
+        border-radius: 5px;
+        font-family: inherit;
+        cursor: pointer;
+        outline: none;
+        font-size: 14px;
+    }
+
+    select:hover {
+        background: #444;
     }
 
     .status-text {
-      margin-top: 20px;
-      font-size: 18px;
-      color: #aaa;
-      font-weight: 300;
-      font-style: italic;
-      min-height: 27px; /* Reserve space to prevent layout shifts */
+        position: absolute;
+        bottom: 30px;
+        font-size: 18px;
+        color: #aaa;
+        font-weight: 300;
+        font-style: italic;
+        text-align: center;
+        background: rgba(0,0,0,0.5);
+        padding: 5px 15px;
+        border-radius: 20px;
     }
   </style>
 </head>
 <body>
-  
-  <img id="character" src="assets/hakoz/closedmouth.png" alt="Click to speak with AI" title="Click to speak with AI">
-  
-  <div id="status" class="status-text">Click the character to speak</div>
 
+  <!-- Controls -->
+  <div class="controls">
+      <select id="char-select">
+          <option value="emma">Emma</option>
+          <option value="erza_sen">Erza Scarlet</option>
+          <option value="nefer">Neferpitou</option>
+          <option value="rias">Rias Gremory</option>
+      </select>
+  </div>
+  
+  <div id="character-container">
+      <!-- The main character image -->
+      <img id="character" src="" alt="AI Character">
+  </div>
+  
+  <div id="status" class="status-text">Initializing...</div>
+
+  <!-- Hidden Audio Elements -->
   <audio id="beep" src="https://www.soundjay.com/button/sounds/button-3.mp3" preload="auto"></audio>
+  <!-- IMPORTANT: Place your welcome audio file in assets/ or update this link -->
+  <audio id="welcome-audio" src="assets/welcome.mp3" preload="auto"></audio>
 
   <script>
-    const character = document.getElementById('character');
+    // --- DOM Elements ---
+    const charImg = document.getElementById('character');
     const statusText = document.getElementById('status');
-    const beep = document.getElementById('beep');
+    const charSelect = document.getElementById('char-select');
+    const beepAudio = document.getElementById('beep');
+    const welcomeAudio = document.getElementById('welcome-audio');
 
-    // --- Animation State ---
-    const characterStates = {
-        idle: 'assets/hakoz/closedmouth.png',
-        blink: 'assets/hakoz/closedeyes.png',
-        listening: 'assets/hakoz/thinking.png',
-        speaking: [
-            'assets/hakoz/openmouth.png',
-            'assets/hakoz/closedmouth.png'
-        ]
+    // --- Configuration ---
+    // Update 'frameCount' if you know the exact number of images in the folder.
+    // If not, the script tries to loop safely, but exact counts are smoother.
+    const CONFIG = {
+        framerate: 40, // ms per frame (lower = faster)
+        padLength: 4,  // Matches frame_0001.jpg format
+        filePrefix: 'frame_',
+        fileExt: '.jpg'
     };
-    
-    // Preload images for smooth animation
-    function preloadImages() {
-        const imagesToLoad = [
-            characterStates.idle, 
-            characterStates.blink, 
-            characterStates.listening, 
-            ...characterStates.speaking
-        ];
-        imagesToLoad.forEach(src => {
-            const img = new Image();
-            img.src = src;
-        });
-    }
-    preloadImages();
 
-    let idleAnimationInterval;
-    let speakingAnimationInterval;
+    const CHARACTERS = {
+        emma: {
+            idle:    { folder: 'emma_idle', frameCount: 75 },
+            talking: { folder: 'emma_talking', frameCount: 75 },
+            waving:  { folder: 'emma_waving', frameCount: 75 }
+        },
+        erza_sen: {
+            idle:    { folder: 'erza_sen_talking', frameCount: 60 }, // Fallback to talking if no idle
+            talking: { folder: 'erza_sen_talking', frameCount: 60 },
+            waving:  { folder: 'erza_sen_waving', frameCount: 60 },
+            teasing: { folder: 'erza_sen_teasing', frameCount: 60 }
+        },
+        nefer: {
+            idle:    { folder: 'nefer_talking', frameCount: 50 },
+            talking: { folder: 'nefer_talking', frameCount: 50 },
+            waving:  { folder: 'nefer_talking', frameCount: 50 } 
+        },
+        rias: {
+            idle:    { folder: 'rias_talking', frameCount: 60 },
+            talking: { folder: 'rias_talking', frameCount: 60 },
+            waving:  { folder: 'rias_summon', frameCount: 60 }
+        }
+    };
 
-    // --- Animation Functions ---
-    function startIdleAnimation() {
-        stopAllAnimations();
-        character.src = characterStates.idle;
-        // Blink every 4 seconds
-        idleAnimationInterval = setInterval(() => {
-            character.src = characterStates.blink;
-            setTimeout(() => {
-                // Check if we are still in idle state before switching back
-                if (character.src.includes('closedeyes')) {
-                    character.src = characterStates.idle;
-                }
-            }, 200); // Blink duration
-        }, 4000);
-    }
-
-    function startSpeakingAnimation() {
-        stopAllAnimations();
-        let frame = 0;
-        // Cycle through speaking frames
-        speakingAnimationInterval = setInterval(() => {
-            character.src = characterStates.speaking[frame];
-            frame = (frame + 1) % characterStates.speaking.length;
-        }, 200); // Speed of mouth movement
-    }
-
-    function stopAllAnimations() {
-        clearInterval(idleAnimationInterval);
-        clearInterval(speakingAnimationInterval);
-    }
-    
-    // --- Core Logic ---
+    // --- State Variables ---
+    let currentCharField = 'emma';
+    let currentState = 'idle'; // idle, talking, waving, listening
+    let animationInterval = null;
+    let frameIndex = 1;
+    let frameDirection = 1; // 1 for forward, -1 for backward
+    let isRecording = false;
     let mediaRecorder;
     let audioChunks = [];
-    let isRecording = false;
+
+    // --- Animation Logic ---
+
+    // Zero-pad helper (e.g., 1 -> "0001")
+    function padNumber(num, size) {
+        let s = "000000000" + num;
+        return s.substr(s.length - size);
+    }
+
+    function getFramePath(charName, state, index) {
+        const charData = CHARACTERS[charName];
+        
+        // Fallback: If requested state doesn't exist, use idle or talking
+        let stateObj = charData[state];
+        if (!stateObj) {
+            // Priority fallback
+            stateObj = charData['idle'] || charData['talking'];
+        }
+
+        const folder = stateObj.folder;
+        const filename = `${CONFIG.filePrefix}${padNumber(index, CONFIG.padLength)}${CONFIG.fileExt}`;
+        return `${folder}/${filename}`;
+    }
+
+    function startAnimation() {
+        if (animationInterval) clearInterval(animationInterval);
+
+        const charData = CHARACTERS[currentCharField];
+        
+        // Determine the max frames for the current state
+        let stateObj = charData[currentState] || charData['idle'];
+        const maxFrames = stateObj.frameCount || 50; // Default safety limit
+
+        animationInterval = setInterval(() => {
+            // Update frame index
+            frameIndex += frameDirection;
+
+            // Ping-Pong Logic
+            if (frameIndex >= maxFrames) {
+                frameIndex = maxFrames;
+                frameDirection = -1; // Reverse
+            } else if (frameIndex <= 1) {
+                frameIndex = 1;
+                frameDirection = 1; // Forward
+            }
+
+            // Construct path and update image
+            const path = getFramePath(currentCharField, currentState, frameIndex);
+            
+            // Image preloading logic to prevent flickering
+            const img = new Image();
+            img.src = path;
+            img.onload = () => {
+                charImg.src = path;
+            };
+            // Optional: If a frame is missing, reverse immediately (Auto-detect end)
+            img.onerror = () => {
+                if (frameDirection === 1) {
+                    frameDirection = -1;
+                    frameIndex -= 2; 
+                }
+            };
+
+        }, CONFIG.framerate);
+    }
+
+    function setState(newState) {
+        if (currentState === newState) return;
+        
+        currentState = newState;
+        frameIndex = 1; // Reset to start of animation immediately
+        frameDirection = 1;
+        
+        // Immediate update to first frame of new state
+        const path = getFramePath(currentCharField, currentState, 1);
+        charImg.src = path;
+        
+        startAnimation();
+    }
+
+    // --- Character Switching ---
+    charSelect.addEventListener('change', (e) => {
+        currentCharField = e.target.value;
+        setState('idle'); // Reset to idle when switching character
+        statusText.textContent = `Switched to ${e.target.options[e.target.selectedIndex].text}`;
+    });
+
+    // --- Welcome Sequence ---
+    function initWelcome() {
+        statusText.textContent = "Welcome!";
+        setState('waving');
+        
+        // Try to play audio
+        welcomeAudio.play().catch(e => {
+            console.log("Audio autoplay might be blocked, click to interact.");
+            statusText.textContent = "Click character to start.";
+        });
+
+        welcomeAudio.onended = () => {
+            setState('idle');
+            statusText.textContent = "Click the character to speak";
+        };
+    }
+
+    // --- Recording & AI Logic ---
 
     function sendToN8n(base64Audio) {
         statusText.textContent = "Processing...";
-        // The image remains in the 'listening' state while processing
+        setState('idle'); // Or 'thinking' if you have that folder
+
         const n8nWebhookUrl = 'https://n8n.srv1120095.hstgr.cloud/webhook/ai-voice-input';
 
         fetch(n8nWebhookUrl, {
@@ -133,7 +276,7 @@
             }),
         })
         .then(response => {
-            if (!response.ok) throw new Error(`Server response was not ok: ${response.status}`);
+            if (!response.ok) throw new Error(`Server error: ${response.status}`);
             return response.blob();
         })
         .then(audioBlob => {
@@ -141,22 +284,30 @@
             const audio = new Audio(audioURL);
 
             audio.onplay = () => {
-              startSpeakingAnimation();
+              setState('talking');
               statusText.textContent = "Responding...";
             };
 
             audio.onended = () => {
-              startIdleAnimation();
+              setState('idle');
               statusText.textContent = "Click the character to speak";
             };
 
             audio.play();
         })
         .catch(err => {
-            console.error("Error communicating with n8n:", err);
+            console.error(err);
             statusText.textContent = "Error communicating with AI.";
-            startIdleAnimation(); // Revert to idle on error
+            setState('idle');
         });
+    }
+
+    async function toggleRecording() {
+        if (isRecording) {
+            stopRecording();
+        } else {
+            startRecording();
+        }
     }
 
     async function startRecording() {
@@ -175,20 +326,19 @@
           const reader = new FileReader();
           reader.readAsDataURL(audioBlob);
           reader.onloadend = () => {
-            const base64String = reader.result;
-            sendToN8n(base64String);
+            sendToN8n(reader.result);
           };
         });
 
-        beep.play();
+        beepAudio.play();
         mediaRecorder.start();
         
-        stopAllAnimations();
-        character.src = characterStates.listening;
+        // Visual cue for recording
+        charImg.style.filter = "drop-shadow(0 0 15px #ff0000aa)";
         statusText.textContent = "Listening...";
       } catch (error) {
-        console.error("Error accessing microphone:", error);
-        statusText.textContent = "Error: Microphone permission denied.";
+        console.error("Mic Error:", error);
+        statusText.textContent = "Microphone access denied.";
         isRecording = false;
       }
     }
@@ -197,22 +347,21 @@
       if (mediaRecorder && mediaRecorder.state === "recording") {
         mediaRecorder.stop();
         isRecording = false;
-        // Status will be updated to "Processing..." in the sendToN8n function
+        charImg.style.filter = ""; // Reset filter
       }
     }
 
-    // Main click handler for the character
-    character.addEventListener('click', () => {
-      if (isRecording) {
-        stopRecording();
-      } else {
-        startRecording();
-      }
-    });
+    // --- Event Listeners ---
+    charImg.addEventListener('click', toggleRecording);
 
-    // Start in idle state when the page loads
-    window.onload = startIdleAnimation;
+    // --- Start ---
+    window.onload = () => {
+        // Start animation loop
+        startAnimation();
+        // Trigger welcome
+        initWelcome();
+    };
 
   </script>
 </body>
-</html>```
+</html>
