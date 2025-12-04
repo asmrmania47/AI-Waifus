@@ -41,6 +41,32 @@
         filter: drop-shadow(0 0 25px #ffffff44);
     }
 
+    /* Start Screen Overlay */
+    #start-screen {
+        position: fixed;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.85);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+        cursor: pointer;
+        flex-direction: column;
+    }
+    
+    #start-btn {
+        padding: 20px 40px;
+        font-size: 24px;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 50px;
+        cursor: pointer;
+        transition: transform 0.2s;
+    }
+    
+    #start-btn:hover { transform: scale(1.05); background: #0056b3; }
+
     .controls {
         position: absolute;
         top: 20px;
@@ -77,10 +103,23 @@
         background: rgba(0,0,0,0.5);
         padding: 5px 15px;
         border-radius: 20px;
+        max-width: 80%;
+    }
+    
+    /* Processing State (Non-clickable) */
+    .processing {
+        cursor: wait !important;
+        opacity: 0.8;
     }
   </style>
 </head>
 <body>
+
+  <!-- Start Screen -->
+  <div id="start-screen">
+      <button id="start-btn">Click to Start</button>
+      <p style="margin-top:10px; color:#aaa;">Enable Audio & Microphone</p>
+  </div>
 
   <!-- Controls -->
   <div class="controls">
@@ -96,11 +135,9 @@
       <img id="character" src="" alt="AI Character">
   </div>
   
-  <div id="status" class="status-text">Initializing...</div>
+  <div id="status" class="status-text">Waiting...</div>
 
-  <!-- Audio Elements -->
   <audio id="beep" src="https://www.soundjay.com/button/sounds/button-3.mp3" preload="auto"></audio>
-  <!-- TYPO FIXED: asstes -> assets -->
   <audio id="welcome-audio" src="asstes/welcome.wav" preload="auto"></audio>
 
   <script>
@@ -110,6 +147,7 @@
     const charSelect = document.getElementById('char-select');
     const beepAudio = document.getElementById('beep');
     const welcomeAudio = document.getElementById('welcome-audio');
+    const startScreen = document.getElementById('start-screen');
 
     // --- Configuration ---
     const CONFIG = {
@@ -121,25 +159,25 @@
 
     const CHARACTERS = {
         emma: {
-            idle:    { folder: 'emma_idle', frameCount: 75 },
-            talking: { folder: 'emma_talking', frameCount: 75 },
-            waving:  { folder: 'emma_waving', frameCount: 75 }
+            idle:    { folder: 'emma_idle', frameCount: 40 },
+            talking: { folder: 'emma_talking', frameCount: 40 },
+            waving:  { folder: 'emma_waving', frameCount: 40 }
         },
         erza_sen: {
-            idle:    { folder: 'erza_sen_teasing', frameCount: 60 }, 
-            talking: { folder: 'erza_sen_talking', frameCount: 60 },
-            waving:  { folder: 'erza_sen_waving', frameCount: 60 },
-            teasing: { folder: 'erza_sen_teasing', frameCount: 60 }
+            idle:    { folder: 'erza_sen_teasing', frameCount: 40 }, 
+            talking: { folder: 'erza_sen_talking', frameCount: 40 },
+            waving:  { folder: 'erza_sen_waving', frameCount: 40 },
+            teasing: { folder: 'erza_sen_teasing', frameCount: 40 }
         },
         nefer: {
-            idle:    { folder: 'nefer_talking', frameCount: 50 },
-            talking: { folder: 'nefer_talking', frameCount: 50 },
-            waving:  { folder: 'nefer_talking', frameCount: 50 } 
+            idle:    { folder: 'nefer_talking', frameCount: 40 },
+            talking: { folder: 'nefer_talking', frameCount: 40 },
+            waving:  { folder: 'nefer_talking', frameCount: 40 } 
         },
         rias: {
-            idle:    { folder: 'rias_talking', frameCount: 60 },
-            talking: { folder: 'rias_talking', frameCount: 60 },
-            waving:  { folder: 'rias_summon', frameCount: 60 }
+            idle:    { folder: 'rias_talking', frameCount: 40 },
+            talking: { folder: 'rias_talking', frameCount: 40 },
+            waving:  { folder: 'rias_summon', frameCount: 40 }
         }
     };
 
@@ -150,6 +188,7 @@
     let frameIndex = 1;
     let frameDirection = 1; 
     let isRecording = false;
+    let isProcessing = false; // New lock variable
     let mediaRecorder;
     let audioChunks = [];
 
@@ -162,14 +201,7 @@
 
     function getFramePath(charName, state, index) {
         const charData = CHARACTERS[charName];
-        
-        let stateObj = charData[state];
-        
-        if (!stateObj) {
-            stateObj = charData['idle'];
-            if (!stateObj) stateObj = charData['talking'];
-        }
-
+        let stateObj = charData[state] || charData['idle'] || charData['talking'];
         const folder = stateObj.folder;
         const filename = `${CONFIG.filePrefix}${padNumber(index, CONFIG.padLength)}${CONFIG.fileExt}`;
         return `${folder}/${filename}`;
@@ -180,13 +212,11 @@
 
         const charData = CHARACTERS[currentCharField];
         let stateObj = charData[currentState] || charData['idle'];
-        // Dynamic frame limit to handle different folder sizes
-        let maxFrames = stateObj.frameCount || 50; 
+        let maxFrames = stateObj.frameCount || 40; 
 
         animationInterval = setInterval(() => {
             frameIndex += frameDirection;
 
-            // Ping-Pong Logic
             if (frameIndex >= maxFrames) {
                 frameIndex = maxFrames;
                 frameDirection = -1; 
@@ -200,17 +230,13 @@
             const img = new Image();
             img.src = path;
             
-            img.onload = () => { 
-                charImg.src = path; 
-            };
+            img.onload = () => { charImg.src = path; };
             
-            // AUTO-STOP: If frame doesn't exist, turn around immediately
+            // Auto-stop on missing frames
             img.onerror = () => {
                 if (frameDirection === 1) {
-                    // Update the limit for this state temporarily to prevent future 404s
                     stateObj.frameCount = frameIndex - 1;
                     maxFrames = frameIndex - 1;
-                    
                     frameDirection = -1;
                     frameIndex = Math.max(1, frameIndex - 2); 
                 }
@@ -221,14 +247,11 @@
 
     function setState(newState) {
         if (currentState === newState) return;
-        
         currentState = newState;
         frameIndex = 1; 
         frameDirection = 1;
-        
         const path = getFramePath(currentCharField, currentState, 1);
         charImg.src = path;
-        
         startAnimation();
     }
 
@@ -236,18 +259,13 @@
     
     function triggerWelcomeSequence(charName) {
         currentCharField = charName;
-        
         const displayName = charSelect.options[charSelect.selectedIndex].text;
         statusText.textContent = `Hello, I'm ${displayName}`;
-        
         setState('waving');
 
         welcomeAudio.pause();
         welcomeAudio.currentTime = 0;
-        
-        welcomeAudio.play().catch(e => {
-            console.log("Autoplay blocked until user interaction.");
-        });
+        welcomeAudio.play().catch(e => console.log("Waiting for interaction"));
 
         welcomeAudio.onended = () => {
             setState('idle');
@@ -256,14 +274,31 @@
     }
 
     charSelect.addEventListener('change', (e) => {
+        if (isProcessing) return; // Prevent switching while thinking
         triggerWelcomeSequence(e.target.value);
+    });
+
+    // --- Start Screen Logic ---
+    startScreen.addEventListener('click', () => {
+        startScreen.style.display = 'none';
+        triggerWelcomeSequence('emma');
     });
 
     // --- Recording & AI Logic ---
 
+    function setProcessingState(active) {
+        isProcessing = active;
+        if (active) {
+            charImg.classList.add('processing');
+        } else {
+            charImg.classList.remove('processing');
+        }
+    }
+
     function sendToN8n(base64Audio) {
-        statusText.textContent = "Thinking...";
-        setState('idle'); // Ensure idle while thinking
+        statusText.textContent = "Thinking... (Please wait)";
+        setState('idle'); 
+        setProcessingState(true); // LOCK INTERFACE
 
         const n8nWebhookUrl = 'https://n8n.srv1120095.hstgr.cloud/webhook-test/ai-waifu-voice-input';
 
@@ -276,24 +311,34 @@
             }),
         })
         .then(response => {
-            // FIX 1: Check content type. If n8n sends JSON, it's an error, not audio.
-            const contentType = response.headers.get("content-type");
-            if (contentType && contentType.indexOf("application/json") !== -1) {
-                console.warn("Server returned JSON instead of audio.");
-                throw new Error("AI returned text/error, not audio.");
+            // Detailed Error Reporting
+            if (!response.ok) {
+                if (response.status === 504) throw new Error("Server Timeout (AI took too long)");
+                if (response.status === 502) throw new Error("Bad Gateway (Server overload)");
+                throw new Error(`Server Error: ${response.status}`);
             }
-            if (!response.ok) throw new Error(`Server error: ${response.status}`);
+            
+            // Warn if JSON returned instead of Audio
+            const contentType = response.headers.get("content-type");
+            if (contentType && contentType.includes("application/json")) {
+                console.warn("Received JSON, expected Audio. Checking for error message...");
+                // Note: We don't throw immediately, we try to parse it to see the error
+            }
+
             return response.blob();
         })
         .then(audioBlob => {
-            // FIX 2: Check if blob is too small (empty response)
-            if (audioBlob.size < 100) throw new Error("Audio response was empty.");
+            // Check for empty response
+            if (audioBlob.size < 100) throw new Error("Empty response from AI");
+
+            // Check if it's actually a JSON error hidden in a blob
+            if (audioBlob.type.includes('json')) {
+                throw new Error("AI returned an error message (JSON)");
+            }
 
             const audioURL = URL.createObjectURL(audioBlob);
             const audio = new Audio(audioURL);
 
-            // FIX 3: Use 'playing' instead of 'play'. 
-            // 'playing' fires when sound actually starts emitting.
             audio.addEventListener('playing', () => {
               setState('talking');
               statusText.textContent = "Responding...";
@@ -301,25 +346,27 @@
 
             audio.addEventListener('ended', () => {
               setState('idle');
-              statusText.textContent = "Click the character to speak";
+              statusText.textContent = "Click to speak again";
+              setProcessingState(false); // UNLOCK
             });
             
             audio.addEventListener('error', (e) => {
-                console.error("Audio failed to play", e);
-                statusText.textContent = "Error playing audio.";
-                setState('idle');
+                throw new Error("Audio format not supported");
             });
 
             audio.play();
         })
         .catch(err => {
             console.error(err);
-            statusText.textContent = "Error: " + err.message;
+            statusText.textContent = `Error: ${err.message}`;
             setState('idle');
+            setProcessingState(false); // UNLOCK on error
         });
     }
 
     async function toggleRecording() {
+        if (isProcessing) return; // Prevent interaction if busy
+
         if (isRecording) {
             stopRecording();
         } else {
@@ -330,8 +377,8 @@
     async function startRecording() {
       try {
         welcomeAudio.pause();
-        
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
         isRecording = true;
         audioChunks = [];
         mediaRecorder = new MediaRecorder(stream);
@@ -353,7 +400,7 @@
         mediaRecorder.start();
         
         charImg.style.filter = "drop-shadow(0 0 15px #ff0000aa)";
-        statusText.textContent = "Listening...";
+        statusText.textContent = "Listening... (Click to stop)";
         setState('idle'); 
 
       } catch (error) {
@@ -373,11 +420,8 @@
 
     // --- Start ---
     charImg.addEventListener('click', toggleRecording);
-
-    window.onload = () => {
-        triggerWelcomeSequence('emma');
-    };
-
+    
+    // Note: window.onload is handled by the Start Screen now
   </script>
 </body>
 </html>
